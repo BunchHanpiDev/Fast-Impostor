@@ -177,6 +177,13 @@ namespace Impostor.Hazel.Udp
                     return;
                 }
 
+                // Only allow IPv4 connections to enable reliable IP-based auth matching
+                if (data.RemoteEndPoint.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    Logger.Warning("Rejected non-IPv4 connection attempt from {0}.", data.RemoteEndPoint);
+                    return;
+                }
+
                 // Create new client
                 client = new UdpServerConnection(this, data.RemoteEndPoint, IPMode, _readerPool);
 

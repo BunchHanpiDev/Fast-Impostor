@@ -2,43 +2,87 @@ using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Impostor.Api.Innersloth;
+using Impostor.Server.Net.Cache;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Impostor.Server.Http;
 
 /// <summary>
-/// This controller has a method to get an auth token.
+/// Issues matchmaker tokens for the /api/user endpoint.
+///
+/// Flow:
+///   1. Client POSTs {Puid, Username, ClientVersion, Language, FriendCode}
+///   2. Server generates a unique nonce, stores nonce→(puid, friendCode) in PuidFriendCodeCache
+///   3. Server embeds the nonce in the token payload (field "Nonce")
+///   4. Client receives the base64 token, extracts LastNonceReceived = token.Content.Nonce
+///      Wait — the official client reads LastNonceReceived from the DTLS auth server, not from
+///      the token content.  But the token IS passed as-is to GetConnectionData as
+///      matchmakerToken (for useDtls=false path the nonce uint32 is written directly).
+///
+///   For the useDtls=false path (custom servers):
+///   - Client writes LastNonceReceived.GetValueOrDefault() as a uint32 in the UDP hello.
+///   - LastNonceReceived is set by AuthManager.Connection_DataReceived after the DTLS auth.
+///   - On failure (no DTLS auth), LastNonceReceived stays null → uint32 = 0.
+///
+///   We can't inject a nonce via the token on this path directly.
+///   HOWEVER the FriendCode IS accessible: the client sends it in the DTLS BuildData payload.
+///   Since we receive those DTLS UDP packets on port+2 (AuthNonceServer), we can read
+///   version+platform+token+FriendCode from the DTLS ClientHello application_data extension,
+///   then send back a proper nonce.
+///
+///   Revised approach implemented here:
+///   - Embed the nonce as a custom "Nonce" field in the token JSON.
+///   - AuthNonceServer reads the DTLS ClientHello, extracts the token (which is the
+///     matchmakerToken string in BuildData), parses it to get the nonce, then replies
+///     with that nonce in a fake "nonce message" so the client's CoWaitForNonce succeeds
+///     and LastNonceReceived equals the nonce we stored in PuidFriendCodeCache.
+///   - UDP handshake then carries this nonce, and ClientManager can look up puid/friendCode.
 /// </summary>
 [Route("/api/user")]
 [ApiController]
 public sealed class TokenController : ControllerBase
 {
-    /// <summary>
-    /// Get an authentication token.
-    /// </summary>
-    /// <param name="request">Token parameters that need to be put into the token.</param>
-    /// <returns>A bare minimum authentication token that the client will accept.</returns>
+    private readonly PuidFriendCodeCache _puidCache;
+    private readonly ILogger<TokenController> _logger;
+
+    public TokenController(PuidFriendCodeCache puidCache, ILogger<TokenController> logger)
+    {
+        _puidCache = puidCache;
+        _logger = logger;
+    }
+
     [HttpPost]
     public IActionResult GetToken([FromBody] TokenRequest request)
     {
+        var friendCode = request.FriendCode ?? string.Empty;
+        var puid = request.ProductUserId ?? string.Empty;
+
+        // Generate nonce and register mapping; FriendCode is stored in cache
+        var nonce = _puidCache.RegisterAndGetNonce(puid, friendCode);
+
+        _logger.LogInformation(
+            "HTTP /api/user: Puid={Puid} FriendCode={FriendCode} → Nonce={Nonce:X8}",
+            puid,
+            string.IsNullOrEmpty(friendCode) ? "(none)" : friendCode,
+            nonce);
+
         var token = new Token
         {
             Content = new TokenPayload
             {
-                ProductUserId = request.ProductUserId,
+                ProductUserId = puid,
                 ClientVersion = request.ClientVersion,
+                // Nonce embedded here so AuthNonceServer can extract it from the DTLS payload
+                Nonce = nonce,
             },
             Hash = "impostor_was_here",
         };
 
-        // Wrap into a Base64 sandwich
         var serialized = JsonSerializer.SerializeToUtf8Bytes(token);
         return this.Ok(Convert.ToBase64String(serialized));
     }
 
-    /// <summary>
-    /// Body of the token request endpoint.
-    /// </summary>
     public class TokenRequest
     {
         [JsonPropertyName("Puid")]
@@ -52,11 +96,11 @@ public sealed class TokenController : ControllerBase
 
         [JsonPropertyName("Language")]
         public required Language Language { get; init; }
+
+        [JsonPropertyName("FriendCode")]
+        public string? FriendCode { get; init; }
     }
 
-    /// <summary>
-    /// Token that is returned to the user with a "signature".
-    /// </summary>
     public sealed class Token
     {
         [JsonPropertyName("Content")]
@@ -66,12 +110,9 @@ public sealed class TokenController : ControllerBase
         public required string Hash { get; init; }
     }
 
-    /// <summary>
-    /// Actual token contents.
-    /// </summary>
     public sealed class TokenPayload
     {
-        private static readonly DateTime DefaultExpiryDate = new(2012, 12, 21);
+        private static readonly DateTime DefaultExpiryDate = new(2099, 12, 31);
 
         [JsonPropertyName("Puid")]
         public required string ProductUserId { get; init; }
@@ -81,5 +122,12 @@ public sealed class TokenController : ControllerBase
 
         [JsonPropertyName("ExpiresAt")]
         public DateTime ExpiresAt { get; init; } = DefaultExpiryDate;
+
+        /// <summary>
+        /// Custom field: the nonce this client should echo back in its UDP hello.
+        /// AuthNonceServer reads this from the DTLS hello payload to send back to the client.
+        /// </summary>
+        [JsonPropertyName("Nonce")]
+        public uint Nonce { get; init; }
     }
 }

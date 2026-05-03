@@ -75,6 +75,16 @@ namespace Impostor.Api.Net
         /// </summary>
         PlatformSpecificData PlatformSpecificData { get; }
 
+        /// <summary>
+        /// Gets the EOS ProductUserId (PUID) of this player. Empty string if not resolved.
+        /// </summary>
+        string Puid { get; }
+
+        /// <summary>
+        /// Gets the FriendCode of this player (e.g. "Name#1234"). Empty string if not resolved.
+        /// </summary>
+        string FriendCode { get; }
+
         ValueTask<bool> ReportCheatAsync(CheatContext context, CheatCategory category, string message);
 
         [Obsolete("Please use the overload that adds a cheat category")]

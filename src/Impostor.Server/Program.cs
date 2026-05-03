@@ -16,6 +16,7 @@ using Impostor.Hazel.Extensions;
 using Impostor.Server.Events;
 using Impostor.Server.Http;
 using Impostor.Server.Net;
+using Impostor.Server.Net.Cache;
 using Impostor.Server.Net.Custom;
 using Impostor.Server.Net.Factories;
 using Impostor.Server.Net.Manager;
@@ -109,6 +110,7 @@ namespace Impostor.Server
                     services.Configure<TimeoutConfig>(host.Configuration.GetSection(TimeoutConfig.Section));
                     services.Configure<HttpServerConfig>(host.Configuration.GetSection(HttpServerConfig.Section));
 
+                    services.AddSingleton<PuidFriendCodeCache>();
                     services.AddSingleton<ICompatibilityManager, CompatibilityManager>();
                     services.AddSingleton<ClientManager>();
                     services.AddSingleton<IClientManager>(p => p.GetRequiredService<ClientManager>());
@@ -145,6 +147,7 @@ namespace Impostor.Server
                     services.AddSingleton<IEventManager, EventManager>();
                     services.AddSingleton<Matchmaker>();
                     services.AddHostedService<MatchmakerService>();
+                    services.AddHostedService<AuthNonceServer>();
                 })
                 .UseSerilog((context, loggerConfiguration) =>
                 {

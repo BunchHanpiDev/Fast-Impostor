@@ -42,6 +42,16 @@ namespace Impostor.Server.Net
 
         public ColorType? PreviousColor { get; set; } = null;
 
+        /// <summary>
+        /// The EOS ProductUserId (PUID) of this player, resolved from cache at connection time.
+        /// </summary>
+        public string Puid { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The FriendCode of this player (e.g. "Name#1234"), resolved from cache at connection time.
+        /// </summary>
+        public string FriendCode { get; set; } = string.Empty;
+
         IClientPlayer? IClient.Player => Player;
 
         public virtual ValueTask<bool> ReportCheatAsync(CheatContext context, CheatCategory category, string message)

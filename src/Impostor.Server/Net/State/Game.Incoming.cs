@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Impostor.Api.Games;
 using Impostor.Api.Innersloth;
 using Impostor.Api.Net;
+using Impostor.Api.Net.Messages;
 using Impostor.Hazel;
 using Impostor.Server.Events;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,16 +28,57 @@ namespace Impostor.Server.Net.State
             await _eventManager.CallAsync(new GameStartingEvent(this));
         }
 
+        // Fixed XP grant per game (can be configured later)
+        private const int XpPerGame = 200;
+
         public async ValueTask HandleEndGame(IMessageReader message, GameOverReason gameOverReason)
         {
             GameState = GameStates.Ended;
 
-            // Broadcast end of the game.
-            using (var packet = MessageWriter.Get(MessageType.Reliable))
-            {
-                message.CopyTo(packet);
-                await SendToAllAsync(packet);
-            }
+            // Build an EndGame packet (MessageFlag=8) containing:
+            //   int32  GameCode
+            //   byte   gameOverReason   ← EndGameResult.Create reads this
+            //   bool   showAd           ← EndGameResult.Create reads this (false for custom servers)
+            //   [sub-message tag=1]     ← XP payload
+            //     int  oldXpAmount
+            //     int  grantedXp
+            //     int  xpRequiredToLevelUp
+            //     int  (padding=0)
+            //     int  oldLevel
+            //     int  newLevel
+            //     int  maxLevel
+            //     string podId         (empty = no cosmicube pod)
+            //     int  currentPods
+            //     int  grantedPodsWithMultiplier
+            //     int  currentBeans
+            //     int  grantedBeansWithMultiplier
+            //     bool hasMultiplier
+            using var packet = MessageWriter.Get(MessageType.Reliable);
+            packet.StartMessage(MessageFlags.EndGame);
+            packet.Write(Code.Value);             // GameCode (int32)
+            packet.Write((byte)gameOverReason);   // gameOverReason
+            packet.Write(false);                  // showAd
+
+            // XP sub-message (tag = 1)
+            packet.StartMessage(1);
+            packet.Write(0);              // oldXpAmount
+            packet.Write(XpPerGame);      // grantedXp
+            packet.Write(1000);           // xpRequiredToLevelUp
+            packet.Write(0);              // unused padding
+            packet.Write(1);              // oldLevel
+            packet.Write(1);              // newLevel
+            packet.Write(99);             // maxLevel
+            packet.Write(string.Empty);   // podId (no pod reward)
+            packet.Write(0);              // currentPods
+            packet.Write(0);              // grantedPodsWithMultiplier
+            packet.Write(0);              // currentBeans
+            packet.Write(0);              // grantedBeansWithMultiplier
+            packet.Write(false);          // hasMultiplier
+            packet.EndMessage();          // end XP sub-message
+
+            packet.EndMessage();          // end EndGame message
+
+            await SendToAllAsync(packet);
 
             // Put all players in the correct limbo state.
             foreach (var player in _players)

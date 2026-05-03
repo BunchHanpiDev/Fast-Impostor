@@ -36,12 +36,14 @@ namespace Impostor.Server.Net
 
         public async ValueTask StartAsync(IPEndPoint ipEndPoint)
         {
-            var mode = ipEndPoint.AddressFamily switch
+            // Force IPv4 to enable reliable IP-based PUID auth matching (anti-proxy)
+            if (ipEndPoint.AddressFamily == AddressFamily.InterNetworkV6)
             {
-                AddressFamily.InterNetwork => IPMode.IPv4,
-                AddressFamily.InterNetworkV6 => IPMode.IPv6,
-                _ => throw new InvalidOperationException(),
-            };
+                throw new InvalidOperationException(
+                    "IPv6 endpoints are not supported; configure the server to listen on an IPv4 address.");
+            }
+
+            var mode = IPMode.IPv4;
 
             _connection = new UdpConnectionListener(ipEndPoint, _readerPool, mode)
             {
@@ -62,14 +64,14 @@ namespace Impostor.Server.Net
         private async ValueTask OnNewConnection(NewConnectionEventArgs e)
         {
             // Handshake.
-            HandshakeC2S.Deserialize(e.HandshakeData, out var clientVersion, out var name, out var language, out var chatMode, out var platformSpecificData);
+            HandshakeC2S.Deserialize(e.HandshakeData, out var clientVersion, out var name, out var language, out var chatMode, out var platformSpecificData, out var lastNonceReceived);
 
             var connection = new HazelConnection(e.Connection, _connectionLogger);
 
             await _eventManager.CallAsync(new ClientConnectionEvent(connection, e.HandshakeData));
 
-            // Register client
-            await _clientManager.RegisterConnectionAsync(connection, name, clientVersion, language, chatMode, platformSpecificData);
+            // Register client (pass nonce so ClientManager can match puid/friendCode)
+            await _clientManager.RegisterConnectionAsync(connection, name, clientVersion, language, chatMode, platformSpecificData, lastNonceReceived);
         }
     }
 }

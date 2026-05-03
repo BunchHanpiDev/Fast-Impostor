@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Impostor.Api.Events.Managers;
 using Impostor.Api.Games;
@@ -128,8 +129,12 @@ namespace Impostor.Server.Net.Inner.Objects
                 Tasks[i].Serialize(writer);
             }
 
-            writer.Write(string.Empty); // FriendCode
-            writer.Write(string.Empty); // PUID
+            // Write FriendCode and PUID from the associated client (resolved at connection time)
+            var clientPlayer = Game.Players.FirstOrDefault(p => p.Character?.PlayerInfo == this);
+            var puid = clientPlayer?.Client.Puid ?? string.Empty;
+            var friendCode = clientPlayer?.Client.FriendCode ?? string.Empty;
+            writer.Write(friendCode); // FriendCode
+            writer.Write(puid);       // PUID
             return new ValueTask<bool>(true);
         }
 

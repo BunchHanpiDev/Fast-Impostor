@@ -4,14 +4,15 @@ namespace Impostor.Api.Net.Messages.C2S
 {
     public static class HandshakeC2S
     {
-        public static void Deserialize(IMessageReader reader, out GameVersion clientVersion, out string name, out Language language, out QuickChatModes chatMode, out PlatformSpecificData? platformSpecificData)
+        public static void Deserialize(IMessageReader reader, out GameVersion clientVersion, out string name, out Language language, out QuickChatModes chatMode, out PlatformSpecificData? platformSpecificData, out uint lastNonceReceived)
         {
+            lastNonceReceived = 0;
             clientVersion = reader.ReadGameVersion();
             name = reader.ReadString();
 
             if (clientVersion >= Version.V1)
             {
-                reader.ReadUInt32(); // lastNonceReceived, always 0 since 2021.11.9
+                lastNonceReceived = reader.ReadUInt32(); // echoed from LastNonceReceived (our auth nonce)
             }
 
             if (clientVersion >= Version.V2)

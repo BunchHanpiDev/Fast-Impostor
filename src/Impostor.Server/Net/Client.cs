@@ -10,6 +10,7 @@ using Impostor.Api.Net.Custom;
 using Impostor.Api.Net.Messages;
 using Impostor.Api.Net.Messages.C2S;
 using Impostor.Api.Net.Messages.S2C;
+using Impostor.Api.Innersloth;
 using Impostor.Hazel;
 using Impostor.Server.Net.Manager;
 using Microsoft.Extensions.Logging;
@@ -330,6 +331,12 @@ namespace Impostor.Server.Net
                     break;
                 }
 
+                case MessageFlags.ReportPlayer:
+                {
+                    await OnReportPlayerAsync(reader);
+                    break;
+                }
+
                 default:
                     if (_customMessageManager.TryGet(flag, out var customRootMessage))
                     {
@@ -405,6 +412,44 @@ namespace Impostor.Server.Net
             }
 
             return true;
+        }
+
+        /// <summary>
+        ///     Triggered when a client reports another player.
+        /// </summary>
+        private ValueTask OnReportPlayerAsync(IMessageReader reader)
+        {
+            // Message format: GameCode (int32), reportedClientId (packed int32), reason (byte)
+            var gameCode = reader.ReadInt32();
+            var reportedClientId = reader.ReadPackedInt32();
+            var reason = (ReportReasons)reader.ReadByte();
+
+            var reporterName = Name;
+            var reporterPuid = Puid;
+            var reportedClient = _clientManager.Clients
+                .FirstOrDefault(c => c.Id == reportedClientId);
+
+            _logger.LogWarning(
+                "Player report: Reporter={Reporter} (Puid={ReporterPuid}) reported ClientId={ReportedId}" +
+                " Name={ReportedName} Puid={ReportedPuid} Reason={Reason} GameCode={GameCode}",
+                reporterName,
+                string.IsNullOrEmpty(reporterPuid) ? "unknown" : reporterPuid,
+                reportedClientId,
+                reportedClient?.Name ?? "unknown",
+                reportedClient?.Puid ?? "unknown",
+                reason,
+                gameCode.ToString());
+
+            // Respond to the reporter with a NotReportedUnknown outcome (no real backend to process it)
+            // Client reads: clientId (packedInt32), reason (int32), outcome (byte), playerName (string)
+            using var message = MessageWriter.Get(MessageType.Reliable);
+            message.StartMessage(MessageFlags.ReportPlayer);
+            message.WritePacked(reportedClientId);
+            message.Write((int)reason);
+            message.Write((byte)ReportOutcome.NotReportedUnknown);
+            message.Write(reportedClient?.Name ?? string.Empty);
+            message.EndMessage();
+            return Connection.SendAsync(message);
         }
 
         /// <summary>
